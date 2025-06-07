@@ -1,0 +1,16 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+.env
+.venv
+.vscode/
+.idea/
+*.swp
+*.swo
+.env
+Thumbs.db
+desktop.ini

@@ -1,0 +1,550 @@
+import pygame
+import sys
+import random
+from enum import Enum
+from typing import List, Tuple, Optional, Set
+
+# Inicializar pygame
+pygame.init()
+
+# Constantes
+BOARD_SIZE = 8
+CELL_SIZE = 80
+BOARD_WIDTH = BOARD_SIZE * CELL_SIZE
+BOARD_HEIGHT = BOARD_SIZE * CELL_SIZE
+SIDEBAR_WIDTH = 300
+WINDOW_WIDTH = BOARD_WIDTH + SIDEBAR_WIDTH
+WINDOW_HEIGHT = BOARD_HEIGHT + 100
+
+# Colores
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+LIGHT_GRAY = (240, 240, 240)
+DARK_GRAY = (128, 128, 128)
+GREEN = (0, 255, 0)
+RED = (255, 0, 0)
+LIGHT_GREEN = (144, 238, 144)
+LIGHT_RED = (255, 182, 193)
+BLUE = (0, 0, 255)
+YELLOW = (255, 255, 0)
+
+class Player(Enum):
+    GREEN = 1
+    RED = 2
+
+class Difficulty(Enum):
+    BEGINNER = 2
+    AMATEUR = 4
+    EXPERT = 6
+
+class GameState(Enum):
+    MENU = 1
+    PLAYING = 2
+    GAME_OVER = 3
+
+class YoshisZonesGame:
+    def __init__(self):
+        self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
+        pygame.display.set_caption("Yoshi's Zones")
+        self.clock = pygame.time.Clock()
+        self.font = pygame.font.Font(None, 36)
+        self.small_font = pygame.font.Font(None, 24)
+        
+        # Estado del juego
+        self.game_state = GameState.MENU
+        self.difficulty = Difficulty.BEGINNER
+        self.current_player = Player.GREEN  # La máquina siempre inicia
+        
+        # Tablero y posiciones
+        self.board = [[None for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
+        self.green_yoshi_pos = None
+        self.red_yoshi_pos = None
+        
+        # Zonas especiales (esquinas + casillas adyacentes)
+        self.special_zones = self._create_special_zones()
+        self.painted_cells = set()  # Células pintadas que no se pueden usar
+        
+        # Puntuación
+        self.green_zones_won = 0
+        self.red_zones_won = 0
+        
+        # Control de turno
+        self.waiting_for_human = False
+        self.game_over = False
+        self.winner = None
+        
+        # NUEVAS VARIABLES: Control de tiempo para la IA
+        self.ai_move_timer = 0
+        self.ai_move_delay = 2000  # 2 segundos de retraso en milisegundos
+        self.show_initial_positions = True
+
+    def _create_special_zones(self) -> List[List[Tuple[int, int]]]:
+        """Crea las 4 zonas especiales en las esquinas del tablero"""
+        zones = []
+        
+        # Zona 1: Esquina superior izquierda
+        zone1 = [(0, 0), (0, 1), (0, 2), (1, 0), (2, 0)]
+        zones.append(zone1)
+        
+        # Zona 2: Esquina superior derecha
+        zone2 = [(0, 5), (0, 6), (0, 7), (1, 7), (2, 7)]
+        zones.append(zone2)
+        
+        # Zona 3: Esquina inferior izquierda 
+        zone3 = [(5, 0), (6, 0), (7, 0), (7, 1), (7, 2)]
+        zones.append(zone3)
+        
+        # Zona 4: Esquina inferior derecha
+        zone4 = [(7, 5), (7, 6), (7, 7), (6, 7), (5, 7)]
+        zones.append(zone4)
+        
+        return zones
+
+    def _is_in_special_zone(self, pos: Tuple[int, int]) -> bool:
+        """Verifica si una posición está en alguna zona especial"""
+        # Primero verificar que la posición esté dentro del tablero
+        row, col = pos
+        if not (0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE):
+            return False
+        
+        # Verificar si está en alguna zona especial
+        for zone in self.special_zones:
+            if pos in zone:
+                return True
+        return False
+
+    def _get_valid_knight_moves(self, pos: Tuple[int, int]) -> List[Tuple[int, int]]:
+        """Obtiene todos los movimientos válidos de caballo desde una posición"""
+        row, col = pos
+        knight_moves = [
+            (-2, -1), (-2, 1), (-1, -2), (-1, 2),
+            (1, -2), (1, 2), (2, -1), (2, 1)
+        ]
+        
+        valid_moves = []
+        for dr, dc in knight_moves:
+            new_row, new_col = row + dr, col + dc
+            if (0 <= new_row < BOARD_SIZE and 0 <= new_col < BOARD_SIZE and
+                (new_row, new_col) not in self.painted_cells):
+                valid_moves.append((new_row, new_col))
+        
+        return valid_moves
+
+    
+    def _place_yoshis_randomly(self):
+        """Coloca los Yoshis en posiciones aleatorias válidas (NO en zonas especiales)"""
+        available_positions = []
+        
+        # Recolectar todas las posiciones válidas (solo casillas normales, NO zonas especiales)
+        for row in range(BOARD_SIZE):
+            for col in range(BOARD_SIZE):
+                pos = (row, col)
+                # Una posición es válida si NO está en una zona especial
+                if not self._is_in_special_zone(pos):
+                    available_positions.append(pos)
+        
+        # Debug
+        print(f"Posiciones disponibles para colocar Yoshis: {len(available_positions)}")
+        print(f"Zonas especiales definidas: {self.special_zones}")
+        
+        # Verificar que haya suficientes posiciones válidas
+        if len(available_positions) < 2:
+            raise ValueError(f"No hay suficientes posiciones válidas para colocar los Yoshis. Solo hay {len(available_positions)} disponibles")
+        
+        # Seleccionar dos posiciones diferentes aleatoriamente
+        selected_positions = random.sample(available_positions, 2)
+        
+        # Asignar posiciones a los Yoshis
+        self.green_yoshi_pos = selected_positions[0]
+        self.red_yoshi_pos = selected_positions[1]
+        
+        # Debug: verificar las posiciones asignadas
+        print(f"Yoshi Verde colocado en: {self.green_yoshi_pos}, ¿En zona especial?: {self._is_in_special_zone(self.green_yoshi_pos)}")
+        print(f"Yoshi Rojo colocado en: {self.red_yoshi_pos}, ¿En zona especial?: {self._is_in_special_zone(self.red_yoshi_pos)}")
+        
+        # Verificación final - si algún Yoshi está en zona especial, es un error
+        if self._is_in_special_zone(self.green_yoshi_pos) or self._is_in_special_zone(self.red_yoshi_pos):
+            print("ERROR: Un Yoshi fue colocado en zona especial. Reintentando...")
+            self._place_yoshis_randomly()  # Reintentar
+
+    def _check_zone_winners(self):
+        """Verifica qué zonas han sido ganadas por cada jugador"""
+        self.green_zones_won = 0
+        self.red_zones_won = 0
+        
+        for zone in self.special_zones:
+            green_count = 0
+            red_count = 0
+            
+            for cell in zone:
+                if cell in self.painted_cells:
+                    # Aquí necesitarías llevar registro de qué jugador pintó cada celda
+                    # Por simplicidad, asumimos que puedes determinarlo de alguna manera
+                    pass
+            
+            # Determinar ganador de la zona
+            if green_count > red_count:
+                self.green_zones_won += 1
+            elif red_count > green_count:
+                self.red_zones_won += 1
+
+    def _is_game_over(self) -> bool:
+        """Verifica si el juego ha terminado (no quedan celdas especiales por pintar)"""
+        all_special_cells = set()
+        for zone in self.special_zones:
+            all_special_cells.update(zone)
+        
+        return all_special_cells.issubset(self.painted_cells)
+
+    # ========== AQUÍ DEBES IMPLEMENTAR Ek ALGORITMO MINIMAX ==========
+    def _get_ai_move(self) -> Optional[Tuple[int, int]]:
+        """
+        IMPLEMENTA AQUÍ EL ALGORITMO MINIMAX
+        
+        Esta función debe:
+        1. Implementar el algoritmo minimax con la profundidad según la dificultad:
+           - BEGINNER: profundidad 2
+           - AMATEUR: profundidad 4
+           - EXPERT: profundidad 6
+        
+        2. Usar una función heurística que evalúe:
+           - Control de zonas especiales
+           - Posiciones estratégicas
+           - Bloqueo del oponente
+        
+        3. Retornar la mejor jugada como tupla (fila, columna)
+        
+        Parámetros disponibles:
+        - self.green_yoshi_pos: posición actual del Yoshi verde (IA)
+        - self.red_yoshi_pos: posición actual del Yoshi rojo (humano)
+        - self.special_zones: lista de zonas especiales
+        - self.painted_cells: conjunto de celdas ya pintadas
+        - self.difficulty.value: profundidad del árbol (2, 4, o 6)
+        """
+        
+        # PLACEHOLDER: Por ahora retorna un movimiento aleatorio válido
+        valid_moves = self._get_valid_knight_moves(self.green_yoshi_pos)
+        if valid_moves:
+            return random.choice(valid_moves)
+        return None
+    
+    def _evaluate_position(self, green_pos: Tuple[int, int], red_pos: Tuple[int, int], 
+                          painted_cells: Set[Tuple[int, int]]) -> float:
+        """
+        IMPLEMENTA AQUÍ TU FUNCIÓN HEURÍSTICA
+        
+        Esta función debe evaluar qué tan buena es una posición para el jugador verde (IA).
+        
+        Considera factores como:
+        - Proximidad a zonas especiales no controladas
+        - Control actual de zonas especiales
+        - Bloqueo de movimientos del oponente
+        - Posiciones centrales vs periféricas
+        
+        Retorna un valor float donde:
+        - Valores positivos favorecen al jugador verde
+        - Valores negativos favorecen al jugador rojo
+        """
+        
+        # PLACEHOLDER: Función heurística básica
+        score = 0.0
+        
+        # Ejemplo básico: preferir estar cerca del centro
+        green_center_dist = abs(green_pos[0] - 3.5) + abs(green_pos[1] - 3.5)
+        red_center_dist = abs(red_pos[0] - 3.5) + abs(red_pos[1] - 3.5)
+        score += (red_center_dist - green_center_dist) * 0.1
+        
+        return score
+    # ================================================================
+
+    def _make_move(self, new_pos: Tuple[int, int]):
+        """Realiza un movimiento del jugador actual"""
+        if self.current_player == Player.GREEN:
+            self.green_yoshi_pos = new_pos
+        else:
+            self.red_yoshi_pos = new_pos
+        
+        # Si la nueva posición está en una zona especial, la pintamos
+        if self._is_in_special_zone(new_pos):
+            self.painted_cells.add(new_pos)
+        
+        # Cambiar turno
+        self.current_player = Player.RED if self.current_player == Player.GREEN else Player.GREEN
+        
+        # Verificar si el juego terminó
+        if self._is_game_over():
+            self.game_over = True
+            self._check_zone_winners()
+            if self.green_zones_won > self.red_zones_won:
+                self.winner = Player.GREEN
+            elif self.red_zones_won > self.green_zones_won:
+                self.winner = Player.RED
+            else:
+                self.winner = None  # Empate
+
+    def _draw_menu(self):
+        """Dibuja el menú principal"""
+        self.screen.fill(WHITE)
+        
+        title = self.font.render("YOSHI'S ZONES", True, BLACK)
+        title_rect = title.get_rect(center=(WINDOW_WIDTH//2, 100))
+        self.screen.blit(title, title_rect)
+        
+        # Botones de dificultad
+        difficulties = [
+            ("Principiante", Difficulty.BEGINNER),
+            ("Amateur", Difficulty.AMATEUR),
+            ("Experto", Difficulty.EXPERT)
+        ]
+        
+        for i, (text, diff) in enumerate(difficulties):
+            color = GREEN if diff == self.difficulty else LIGHT_GRAY
+            pygame.draw.rect(self.screen, color, (WINDOW_WIDTH//2 - 150, 200 + i*60, 300, 50))
+            text_surface = self.small_font.render(text, True, BLACK)
+            text_rect = text_surface.get_rect(center=(WINDOW_WIDTH//2, 225 + i*60))
+            self.screen.blit(text_surface, text_rect)
+        
+        # Botón de inicio
+        pygame.draw.rect(self.screen, BLUE, (WINDOW_WIDTH//2 - 100, 400, 200, 50))
+        start_text = self.font.render("INICIAR", True, WHITE)
+        start_rect = start_text.get_rect(center=(WINDOW_WIDTH//2, 425))
+        self.screen.blit(start_text, start_rect)
+
+    def _draw_board(self):
+        """Dibuja el tablero de ajedrez con mejor visualización"""
+        for row in range(BOARD_SIZE):
+            for col in range(BOARD_SIZE):
+                x = col * CELL_SIZE
+                y = row * CELL_SIZE
+                
+                # Color base del tablero (ajedrez)
+                base_color = WHITE if (row + col) % 2 == 0 else LIGHT_GRAY
+                
+                # Determinar el color final de la celda
+                if self._is_in_special_zone((row, col)):
+                    if (row, col) in self.painted_cells:
+                        # Celda de zona especial ya pintada
+                        color = LIGHT_GREEN  # Puedes mejorar esto para mostrar quién la pintó
+                    else:
+                        # Zona especial no pintada
+                        color = YELLOW
+                else:
+                    # Celda normal
+                    color = base_color
+                
+                pygame.draw.rect(self.screen, color, (x, y, CELL_SIZE, CELL_SIZE))
+                pygame.draw.rect(self.screen, BLACK, (x, y, CELL_SIZE, CELL_SIZE), 2)
+        
+        # Dibujar Yoshis
+        if self.green_yoshi_pos:
+            col, row = self.green_yoshi_pos[1], self.green_yoshi_pos[0]
+            x = col * CELL_SIZE + CELL_SIZE//2
+            y = row * CELL_SIZE + CELL_SIZE//2
+            pygame.draw.circle(self.screen, GREEN, (x, y), CELL_SIZE//3)
+            # Añadir borde negro para mejor visibilidad
+            pygame.draw.circle(self.screen, BLACK, (x, y), CELL_SIZE//3, 3)
+            
+        if self.red_yoshi_pos:
+            col, row = self.red_yoshi_pos[1], self.red_yoshi_pos[0]
+            x = col * CELL_SIZE + CELL_SIZE//2
+            y = row * CELL_SIZE + CELL_SIZE//2
+            pygame.draw.circle(self.screen, RED, (x, y), CELL_SIZE//3)
+            # Añadir borde negro para mejor visibilidad
+            pygame.draw.circle(self.screen, BLACK, (x, y), CELL_SIZE//3, 3)
+
+    def _draw_sidebar(self):
+        """Dibuja la barra lateral con información del juego"""
+        sidebar_x = BOARD_WIDTH
+        pygame.draw.rect(self.screen, LIGHT_GRAY, (sidebar_x, 0, SIDEBAR_WIDTH, WINDOW_HEIGHT))
+        
+        # Título
+        title = self.font.render("INFORMACIÓN", True, BLACK)
+        self.screen.blit(title, (sidebar_x + 10, 20))
+        
+        # Dificultad actual
+        diff_text = f"Dificultad: {self.difficulty.name}"
+        diff_surface = self.small_font.render(diff_text, True, BLACK)
+        self.screen.blit(diff_surface, (sidebar_x + 10, 60))
+        
+        # Turno actual con información adicional
+        if self.show_initial_positions:
+            current = "Iniciando... (IA jugará en breve)"
+        else:
+            current = "IA (Verde)" if self.current_player == Player.GREEN else "Humano (Rojo)"
+        
+        turn_text = f"Turno: {current}"
+        turn_surface = self.small_font.render(turn_text, True, BLACK)
+        self.screen.blit(turn_surface, (sidebar_x + 10, 90))
+        
+        # NUEVO: Mostrar posiciones actuales
+        if self.green_yoshi_pos:
+            green_pos_text = f"Verde en: {self.green_yoshi_pos}"
+            green_pos_surface = self.small_font.render(green_pos_text, True, GREEN)
+            self.screen.blit(green_pos_surface, (sidebar_x + 10, 120))
+        
+        if self.red_yoshi_pos:
+            red_pos_text = f"Rojo en: {self.red_yoshi_pos}"
+            red_pos_surface = self.small_font.render(red_pos_text, True, RED)
+            self.screen.blit(red_pos_surface, (sidebar_x + 10, 145))
+        
+        # Puntuación
+        score_text = "PUNTUACIÓN:"
+        score_surface = self.small_font.render(score_text, True, BLACK)
+        self.screen.blit(score_surface, (sidebar_x + 10, 180))
+        
+        green_score = f"Verde: {self.green_zones_won} zonas"
+        green_surface = self.small_font.render(green_score, True, GREEN)
+        self.screen.blit(green_surface, (sidebar_x + 10, 210))
+        
+        red_score = f"Rojo: {self.red_zones_won} zonas"
+        red_surface = self.small_font.render(red_score, True, RED)
+        self.screen.blit(red_surface, (sidebar_x + 10, 240))
+        
+        # Instrucciones
+        instructions = [
+            "INSTRUCCIONES:",
+            "- Los Yoshis se mueven como",
+            "  caballos de ajedrez",
+            "- Haz clic en una casilla",
+            "  válida para moverte",
+            "- Gana zonas especiales",
+            "  (amarillas) pintando la",
+            "  mayoría de sus casillas"
+        ]
+        
+        for i, instruction in enumerate(instructions):
+            color = BLACK if i == 0 else DARK_GRAY
+            font = self.small_font if i > 0 else self.small_font
+            inst_surface = font.render(instruction, True, color)
+            self.screen.blit(inst_surface, (sidebar_x + 10, 300 + i*25))
+
+    def _draw_game_over(self):
+        """Dibuja la pantalla de fin de juego"""
+        overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
+        overlay.set_alpha(128)
+        overlay.fill(BLACK)
+        self.screen.blit(overlay, (0, 0))
+        
+        # Mensaje de fin de juego
+        if self.winner == Player.GREEN:
+            message = "¡LA IA HA GANADO!"
+            color = GREEN
+        elif self.winner == Player.RED:
+            message = "¡HAS GANADO!"
+            color = RED
+        else:
+            message = "¡EMPATE!"
+            color = BLUE
+        
+        text_surface = self.font.render(message, True, color)
+        text_rect = text_surface.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 - 50))
+        self.screen.blit(text_surface, text_rect)
+        
+        # Puntuación final
+        final_score = f"Verde: {self.green_zones_won} - Rojo: {self.red_zones_won}"
+        score_surface = self.small_font.render(final_score, True, WHITE)
+        score_rect = score_surface.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2))
+        self.screen.blit(score_surface, score_rect)
+        
+        # Botón para volver al menú
+        pygame.draw.rect(self.screen, BLUE, (WINDOW_WIDTH//2 - 100, WINDOW_HEIGHT//2 + 50, 200, 50))
+        menu_text = self.small_font.render("VOLVER AL MENÚ", True, WHITE)
+        menu_rect = menu_text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 + 75))
+        self.screen.blit(menu_text, menu_rect)
+
+    def _handle_click(self, pos: Tuple[int, int]):
+        """Maneja los clics del mouse"""
+        x, y = pos
+        
+        if self.game_state == GameState.MENU:
+            # Botones de dificultad
+            if 200 <= y <= 250:
+                self.difficulty = Difficulty.BEGINNER
+            elif 260 <= y <= 310:
+                self.difficulty = Difficulty.AMATEUR
+            elif 320 <= y <= 370:
+                self.difficulty = Difficulty.EXPERT
+            elif 400 <= y <= 450 and WINDOW_WIDTH//2 - 100 <= x <= WINDOW_WIDTH//2 + 100:
+                # Iniciar juego
+                self.game_state = GameState.PLAYING
+                self._place_yoshis_randomly()
+                self.painted_cells.clear()
+                self.current_player = Player.GREEN
+                self.game_over = False
+                self.winner = None
+                
+                # NUEVO: Configurar el timer para el primer movimiento de la IA
+                self.ai_move_timer = pygame.time.get_ticks()
+                self.show_initial_positions = True
+                
+        elif self.game_state == GameState.PLAYING and not self.game_over:
+            # Solo permitir clics del humano en su turno
+            if self.current_player == Player.RED and x < BOARD_WIDTH:
+                col = x // CELL_SIZE
+                row = y // CELL_SIZE
+                
+                if 0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE:
+                    valid_moves = self._get_valid_knight_moves(self.red_yoshi_pos)
+                    if (row, col) in valid_moves:
+                        self._make_move((row, col))
+                        
+        elif self.game_over:
+            # Volver al menú
+            if (WINDOW_HEIGHT//2 + 50 <= y <= WINDOW_HEIGHT//2 + 100 and
+                WINDOW_WIDTH//2 - 100 <= x <= WINDOW_WIDTH//2 + 100):
+                self.game_state = GameState.MENU
+                
+    def update(self):
+        """Actualiza la lógica del juego"""
+        if (self.game_state == GameState.PLAYING and 
+            self.current_player == Player.GREEN and 
+            not self.game_over):
+            
+            # Si es el primer movimiento, mostrar posiciones iniciales por un momento
+            if self.show_initial_positions:
+                current_time = pygame.time.get_ticks()
+                if current_time - self.ai_move_timer > self.ai_move_delay:
+                    self.show_initial_positions = False
+                    # Ahora sí hacer el movimiento de la IA
+                    ai_move = self._get_ai_move()
+                    if ai_move:
+                        self._make_move(ai_move)
+            else:
+                # Movimientos normales de la IA (sin retraso)
+                ai_move = self._get_ai_move()
+                if ai_move:
+                    self._make_move(ai_move)
+
+    def draw(self):
+        """Dibuja toda la interfaz"""
+        if self.game_state == GameState.MENU:
+            self._draw_menu()
+        elif self.game_state == GameState.PLAYING:
+            self.screen.fill(WHITE)
+            self._draw_board()
+            self._draw_sidebar()
+            if self.game_over:
+                self._draw_game_over()
+
+    def run(self):
+        """Bucle principal del juego"""
+        running = True
+        while running:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    self._handle_click(event.pos)
+            
+            self.update()
+            self.draw()
+            pygame.display.flip()
+            self.clock.tick(60)
+        
+        pygame.quit()
+        sys.exit()
+
+# Ejecutar el juego
+if __name__ == "__main__":
+    game = YoshisZonesGame()
+    game.run()
