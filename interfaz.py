@@ -49,6 +49,7 @@ class YoshisZonesGame:
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 36)
         self.small_font = pygame.font.Font(None, 24)
+        self.cell_owner = {}
         
         # Estado del juego
         self.game_state = GameState.MENU
@@ -168,25 +169,19 @@ class YoshisZonesGame:
             self._place_yoshis_randomly()  # Reintentar
 
     def _check_zone_winners(self):
-        """Verifica qué zonas han sido ganadas por cada jugador"""
+        """Verifica qué zonas han sido ganadas por completo por cada jugador"""
         self.green_zones_won = 0
         self.red_zones_won = 0
-        
+
         for zone in self.special_zones:
-            green_count = 0
-            red_count = 0
-            
-            for cell in zone:
-                if cell in self.painted_cells:
-                    # Aquí necesitarías llevar registro de qué jugador pintó cada celda
-                    # Por simplicidad, asumimos que puedes determinarlo de alguna manera
-                    pass
-            
-            # Determinar ganador de la zona
-            if green_count > red_count:
+            owners = [self.cell_owner.get(cell) for cell in zone]
+
+            # Si todos los cuadros están pintados y por el mismo jugador
+            if owners.count(Player.GREEN) == 5:
                 self.green_zones_won += 1
-            elif red_count > green_count:
+            elif owners.count(Player.RED) == 5:
                 self.red_zones_won += 1
+
 
     def _is_game_over(self) -> bool:
         """Verifica si el juego ha terminado (no quedan celdas especiales por pintar)"""
@@ -196,8 +191,47 @@ class YoshisZonesGame:
         
         return all_special_cells.issubset(self.painted_cells)
 
-    # ========== AQUÍ DEBES IMPLEMENTAR Ek ALGORITMO MINIMAX ==========
-    def _get_ai_move(self) -> Optional[Tuple[int, int]]:
+    # ========== AQUÍ DEBES IMPLEMENTAR EL ALGORITMO MINIMAX ==========
+    def _get_ai_move(self):
+        depth = self.difficulty.value
+
+        def minimax(g_pos, r_pos, painted, cell_owner, maximizing, depth_left):
+            if depth_left == 0 or self._is_game_over():
+                return self._evaluate_position(g_pos, r_pos, painted, cell_owner), None
+
+            current_pos = g_pos if maximizing else r_pos
+            valid_moves = self._get_valid_knight_moves(current_pos)
+
+            if not valid_moves:
+                return self._evaluate_position(g_pos, r_pos, painted, cell_owner), None
+
+            best_value = float('-inf') if maximizing else float('inf')
+            best_move = None
+
+            for move in valid_moves:
+                new_painted = painted.copy()
+                new_owner = cell_owner.copy()
+
+                if self._is_in_special_zone(move):
+                    new_painted.add(move)
+                    new_owner[move] = Player.GREEN if maximizing else Player.RED
+
+                if maximizing:
+                    val, _ = minimax(move, r_pos, new_painted, new_owner, False, depth_left - 1)
+                    if val > best_value:
+                        best_value = val
+                        best_move = move
+                else:
+                    val, _ = minimax(g_pos, move, new_painted, new_owner, True, depth_left - 1)
+                    if val < best_value:
+                        best_value = val
+                        best_move = move
+
+            return best_value, best_move
+
+        _, best = minimax(self.green_yoshi_pos, self.red_yoshi_pos, self.painted_cells, self.cell_owner, True, depth)
+        return best
+
         """
         IMPLEMENTA AQUÍ EL ALGORITMO MINIMAX
         
@@ -222,14 +256,37 @@ class YoshisZonesGame:
         - self.difficulty.value: profundidad del árbol (2, 4, o 6)
         """
         
-        # PLACEHOLDER: Por ahora retorna un movimiento aleatorio válido
-        valid_moves = self._get_valid_knight_moves(self.green_yoshi_pos)
-        if valid_moves:
-            return random.choice(valid_moves)
-        return None
+       
     
-    def _evaluate_position(self, green_pos: Tuple[int, int], red_pos: Tuple[int, int], 
-                          painted_cells: Set[Tuple[int, int]]) -> float:
+    def _evaluate_position(self, green_pos, red_pos, painted_cells, cell_owner) -> float:
+        score = 0.0
+
+        # Evaluar control de zonas
+        for zone in self.special_zones:
+            green_count = 0
+            red_count = 0
+            for cell in zone:
+                if cell in cell_owner:
+                    if cell_owner[cell] == Player.GREEN:
+                        green_count += 1
+                    elif cell_owner[cell] == Player.RED:
+                        red_count += 1
+            # Zona dominada = +1 punto
+            if green_count > red_count:
+                score += 1
+            elif red_count > green_count:
+                score -= 1
+
+        # Penalizar distancia a zonas especiales
+        for zone in self.special_zones:
+            for cell in zone:
+                if cell not in painted_cells:
+                    g_dist = abs(green_pos[0] - cell[0]) + abs(green_pos[1] - cell[1])
+                    r_dist = abs(red_pos[0] - cell[0]) + abs(red_pos[1] - cell[1])
+                    score += (r_dist - g_dist) * 0.05  # preferir que Yoshi verde esté más cerca
+
+        return score
+
         """
         IMPLEMENTA AQUÍ TU FUNCIÓN HEURÍSTICA
         
@@ -245,16 +302,7 @@ class YoshisZonesGame:
         - Valores positivos favorecen al jugador verde
         - Valores negativos favorecen al jugador rojo
         """
-        
-        # PLACEHOLDER: Función heurística básica
-        score = 0.0
-        
-        # Ejemplo básico: preferir estar cerca del centro
-        green_center_dist = abs(green_pos[0] - 3.5) + abs(green_pos[1] - 3.5)
-        red_center_dist = abs(red_pos[0] - 3.5) + abs(red_pos[1] - 3.5)
-        score += (red_center_dist - green_center_dist) * 0.1
-        
-        return score
+    
     # ================================================================
 
     def _make_move(self, new_pos: Tuple[int, int]):
@@ -263,14 +311,18 @@ class YoshisZonesGame:
             self.green_yoshi_pos = new_pos
         else:
             self.red_yoshi_pos = new_pos
-        
+
         # Si la nueva posición está en una zona especial, la pintamos
         if self._is_in_special_zone(new_pos):
             self.painted_cells.add(new_pos)
-        
+            self.cell_owner[new_pos] = self.current_player
+
         # Cambiar turno
         self.current_player = Player.RED if self.current_player == Player.GREEN else Player.GREEN
-        
+
+        # Verificar zonas ganadas inmediatamente
+        self._check_zone_winners()
+
         # Verificar si el juego terminó
         if self._is_game_over():
             self.game_over = True
@@ -281,6 +333,7 @@ class YoshisZonesGame:
                 self.winner = Player.RED
             else:
                 self.winner = None  # Empate
+
 
     def _draw_menu(self):
         """Dibuja el menú principal"""
@@ -320,11 +373,16 @@ class YoshisZonesGame:
                 # Color base del tablero (ajedrez)
                 base_color = WHITE if (row + col) % 2 == 0 else LIGHT_GRAY
                 
+                
                 # Determinar el color final de la celda
                 if self._is_in_special_zone((row, col)):
                     if (row, col) in self.painted_cells:
+                        owner = self.cell_owner.get((row, col))
                         # Celda de zona especial ya pintada
-                        color = LIGHT_GREEN  # Puedes mejorar esto para mostrar quién la pintó
+                        if owner == Player.GREEN:
+                            color = LIGHT_GREEN
+                        elif owner == Player.RED:
+                            color = LIGHT_RED  # Puedes mejorar esto para mostrar quién la pintó
                     else:
                         # Zona especial no pintada
                         color = YELLOW
@@ -468,7 +526,10 @@ class YoshisZonesGame:
                 # Iniciar juego
                 self.game_state = GameState.PLAYING
                 self._place_yoshis_randomly()
+                self.green_zones_won = 0  # Reinicia las zonas ganadas a 0
+                self.red_zones_won = 0
                 self.painted_cells.clear()
+                self.cell_owner.clear()
                 self.current_player = Player.GREEN
                 self.game_over = False
                 self.winner = None
