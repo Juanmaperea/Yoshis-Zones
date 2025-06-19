@@ -43,7 +43,25 @@ class GameLogic:
                     (new_row, new_col) not in painted_cells):
                     valid_moves.append((new_row, new_col))
             return valid_moves
-
+        
+        
+        
+        
+        """
+        IMPLEMENTA AQUÍ TU FUNCIÓN HEURÍSTICA
+        
+        Esta función debe evaluar qué tan buena es una posición para el jugador verde (IA).
+        
+        Considera factores como:
+        - Proximidad a zonas especiales no controladas
+        - Control actual de zonas especiales
+        - Bloqueo de movimientos del oponente
+        - Posiciones centrales vs periféricas
+        
+        Retorna un valor float donde:
+        - Valores positivos favorecen al jugador verde
+        - Valores negativos favorecen al jugador rojo
+        """
         def evaluate_position(green_pos, red_pos, painted_cells, cell_owner) -> float:
             score = 0.0
             for zone in self.special_zones:
@@ -69,23 +87,34 @@ class GameLogic:
 
             return score
         
-        """
-        IMPLEMENTA AQUÍ TU FUNCIÓN HEURÍSTICA
         
-        Esta función debe evaluar qué tan buena es una posición para el jugador verde (IA).
-        
-        Considera factores como:
-        - Proximidad a zonas especiales no controladas
-        - Control actual de zonas especiales
-        - Bloqueo de movimientos del oponente
-        - Posiciones centrales vs periféricas
-        
-        Retorna un valor float donde:
-        - Valores positivos favorecen al jugador verde
-        - Valores negativos favorecen al jugador rojo
-        """
 
         # ================================================================
+
+
+        """
+        IMPLEMENTA AQUÍ EL ALGORITMO MINIMAX
+        
+        Esta función debe:
+        1. Implementar el algoritmo minimax con la profundidad según la dificultad:
+           - BEGINNER: profundidad 2
+           - AMATEUR: profundidad 4
+           - EXPERT: profundidad 6
+        
+        2. Usar una función heurística que evalúe:
+           - Control de zonas especiales
+           - Posiciones estratégicas
+           - Bloqueo del oponente
+        
+        3. Retornar la mejor jugada como tupla (fila, columna)
+        
+        Parámetros disponibles:
+        - self.green_yoshi_pos: posición actual del Yoshi verde (IA)
+        - self.red_yoshi_pos: posición actual del Yoshi rojo (humano)
+        - self.special_zones: lista de zonas especiales
+        - self.painted_cells: conjunto de celdas ya pintadas
+        - self.difficulty.value: profundidad del árbol (2, 4, o 6)
+        """
 
         def minimax(g_pos, r_pos, painted, cell_owner, maximizing, depth_left):
             if depth_left == 0:
