@@ -3,6 +3,8 @@ import sys
 import random
 from enum import Enum
 from typing import List, Tuple, Optional, Set
+from algoritmo import GameLogic, Player, Difficulty
+
 
 # Inicializar pygame
 pygame.init()
@@ -28,14 +30,6 @@ LIGHT_RED = (255, 182, 193)
 BLUE = (0, 0, 255)
 YELLOW = (255, 255, 0)
 
-class Player(Enum):
-    GREEN = 1
-    RED = 2
-
-class Difficulty(Enum):
-    BEGINNER = 2
-    AMATEUR = 4
-    EXPERT = 6
 
 class GameState(Enum):
     MENU = 1
@@ -63,6 +57,7 @@ class YoshisZonesGame:
         
         # Zonas especiales (esquinas + casillas adyacentes)
         self.special_zones = self._create_special_zones()
+        self.logic = GameLogic(self.difficulty, self.special_zones) #importamos la logica
         self.painted_cells = set()  # Células pintadas que no se pueden usar
         
         # Puntuación
@@ -191,119 +186,6 @@ class YoshisZonesGame:
         
         return all_special_cells.issubset(self.painted_cells)
 
-    # ========== AQUÍ DEBES IMPLEMENTAR EL ALGORITMO MINIMAX ==========
-    def _get_ai_move(self):
-        depth = self.difficulty.value
-
-        def minimax(g_pos, r_pos, painted, cell_owner, maximizing, depth_left):
-            if depth_left == 0 or self._is_game_over():
-                return self._evaluate_position(g_pos, r_pos, painted, cell_owner), None
-
-            current_pos = g_pos if maximizing else r_pos
-            valid_moves = self._get_valid_knight_moves(current_pos)
-
-            if not valid_moves:
-                return self._evaluate_position(g_pos, r_pos, painted, cell_owner), None
-
-            best_value = float('-inf') if maximizing else float('inf')
-            best_move = None
-
-            for move in valid_moves:
-                new_painted = painted.copy()
-                new_owner = cell_owner.copy()
-
-                if self._is_in_special_zone(move):
-                    new_painted.add(move)
-                    new_owner[move] = Player.GREEN if maximizing else Player.RED
-
-                if maximizing:
-                    val, _ = minimax(move, r_pos, new_painted, new_owner, False, depth_left - 1)
-                    if val > best_value:
-                        best_value = val
-                        best_move = move
-                else:
-                    val, _ = minimax(g_pos, move, new_painted, new_owner, True, depth_left - 1)
-                    if val < best_value:
-                        best_value = val
-                        best_move = move
-
-            return best_value, best_move
-
-        _, best = minimax(self.green_yoshi_pos, self.red_yoshi_pos, self.painted_cells, self.cell_owner, True, depth)
-        return best
-
-        """
-        IMPLEMENTA AQUÍ EL ALGORITMO MINIMAX
-        
-        Esta función debe:
-        1. Implementar el algoritmo minimax con la profundidad según la dificultad:
-           - BEGINNER: profundidad 2
-           - AMATEUR: profundidad 4
-           - EXPERT: profundidad 6
-        
-        2. Usar una función heurística que evalúe:
-           - Control de zonas especiales
-           - Posiciones estratégicas
-           - Bloqueo del oponente
-        
-        3. Retornar la mejor jugada como tupla (fila, columna)
-        
-        Parámetros disponibles:
-        - self.green_yoshi_pos: posición actual del Yoshi verde (IA)
-        - self.red_yoshi_pos: posición actual del Yoshi rojo (humano)
-        - self.special_zones: lista de zonas especiales
-        - self.painted_cells: conjunto de celdas ya pintadas
-        - self.difficulty.value: profundidad del árbol (2, 4, o 6)
-        """
-        
-       
-    
-    def _evaluate_position(self, green_pos, red_pos, painted_cells, cell_owner) -> float:
-        score = 0.0
-
-        # Evaluar control de zonas
-        for zone in self.special_zones:
-            green_count = 0
-            red_count = 0
-            for cell in zone:
-                if cell in cell_owner:
-                    if cell_owner[cell] == Player.GREEN:
-                        green_count += 1
-                    elif cell_owner[cell] == Player.RED:
-                        red_count += 1
-            # Zona dominada = +1 punto
-            if green_count > red_count:
-                score += 1
-            elif red_count > green_count:
-                score -= 1
-
-        # Penalizar distancia a zonas especiales
-        for zone in self.special_zones:
-            for cell in zone:
-                if cell not in painted_cells:
-                    g_dist = abs(green_pos[0] - cell[0]) + abs(green_pos[1] - cell[1])
-                    r_dist = abs(red_pos[0] - cell[0]) + abs(red_pos[1] - cell[1])
-                    score += (r_dist - g_dist) * 0.05  # preferir que Yoshi verde esté más cerca
-
-        return score
-
-        """
-        IMPLEMENTA AQUÍ TU FUNCIÓN HEURÍSTICA
-        
-        Esta función debe evaluar qué tan buena es una posición para el jugador verde (IA).
-        
-        Considera factores como:
-        - Proximidad a zonas especiales no controladas
-        - Control actual de zonas especiales
-        - Bloqueo de movimientos del oponente
-        - Posiciones centrales vs periféricas
-        
-        Retorna un valor float donde:
-        - Valores positivos favorecen al jugador verde
-        - Valores negativos favorecen al jugador rojo
-        """
-    
-    # ================================================================
 
     def _make_move(self, new_pos: Tuple[int, int]):
         """Realiza un movimiento del jugador actual"""
@@ -518,10 +400,13 @@ class YoshisZonesGame:
             # Botones de dificultad
             if 200 <= y <= 250:
                 self.difficulty = Difficulty.BEGINNER
+                self.logic.difficulty = self.difficulty
             elif 260 <= y <= 310:
                 self.difficulty = Difficulty.AMATEUR
+                self.logic.difficulty = self.difficulty
             elif 320 <= y <= 370:
                 self.difficulty = Difficulty.EXPERT
+                self.logic.difficulty = self.difficulty
             elif 400 <= y <= 450 and WINDOW_WIDTH//2 - 100 <= x <= WINDOW_WIDTH//2 + 100:
                 # Iniciar juego
                 self.game_state = GameState.PLAYING
@@ -567,12 +452,24 @@ class YoshisZonesGame:
                 if current_time - self.ai_move_timer > self.ai_move_delay:
                     self.show_initial_positions = False
                     # Ahora sí hacer el movimiento de la IA
-                    ai_move = self._get_ai_move()
+                    ai_move = self.logic.get_ai_move(
+                        self.green_yoshi_pos,
+                        self.red_yoshi_pos,
+                        self.painted_cells,
+                        self.cell_owner
+                    )
+
                     if ai_move:
                         self._make_move(ai_move)
             else:
                 # Movimientos normales de la IA (sin retraso)
-                ai_move = self._get_ai_move()
+                ai_move = self.logic.get_ai_move(
+                    self.green_yoshi_pos,
+                    self.red_yoshi_pos,
+                    self.painted_cells,
+                    self.cell_owner
+                )
+
                 if ai_move:
                     self._make_move(ai_move)
 
