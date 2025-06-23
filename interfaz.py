@@ -29,7 +29,7 @@ LIGHT_GREEN = (144, 238, 144)
 LIGHT_RED = (255, 182, 193)
 BLUE = (0, 0, 255)
 YELLOW = (255, 255, 0)
-
+ORANGE = (255, 165, 0) 
 
 class GameState(Enum):
     MENU = 1
@@ -57,7 +57,7 @@ class YoshisZonesGame:
         
         # Zonas especiales (esquinas + casillas adyacentes)
         self.special_zones = self._create_special_zones()
-        self.logic = GameLogic(self.difficulty, self.special_zones) #importamos la logica
+        self.logic = GameLogic(self.difficulty, self.special_zones)
         self.painted_cells = set()  # Células pintadas que no se pueden usar
         
         # Puntuación
@@ -69,10 +69,20 @@ class YoshisZonesGame:
         self.game_over = False
         self.winner = None
         
-        # NUEVAS VARIABLES: Control de tiempo para la IA
+        # Control de tiempo mejorado
         self.ai_move_timer = 0
-        self.ai_move_delay = 2000  # 2 segundos de retraso en milisegundos
+        self.ai_move_delay = 1500  
+        self.human_move_delay = 500 
+        self.last_move_time = 0
         self.show_initial_positions = True
+        
+        # Historial de movimientos para evitar bucles
+        self.move_history = []
+        self.max_history = 6  
+        
+        # Mostrar movimientos válidos
+        self.show_valid_moves = False
+        self.valid_moves_for_display = []
 
     def _create_special_zones(self) -> List[List[Tuple[int, int]]]:
         """Crea las 4 zonas especiales en las esquinas del tablero"""
@@ -98,12 +108,10 @@ class YoshisZonesGame:
 
     def _is_in_special_zone(self, pos: Tuple[int, int]) -> bool:
         """Verifica si una posición está en alguna zona especial"""
-        # Primero verificar que la posición esté dentro del tablero
         row, col = pos
         if not (0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE):
             return False
         
-        # Verificar si está en alguna zona especial
         for zone in self.special_zones:
             if pos in zone:
                 return True
@@ -122,46 +130,39 @@ class YoshisZonesGame:
             new_row, new_col = row + dr, col + dc
             if (0 <= new_row < BOARD_SIZE and 0 <= new_col < BOARD_SIZE and
                 (new_row, new_col) not in self.painted_cells):
-                valid_moves.append((new_row, new_col))
+                
+                # No permitir que los Yoshis ocupen la misma posición
+                other_yoshi_pos = self.red_yoshi_pos if pos == self.green_yoshi_pos else self.green_yoshi_pos
+                if other_yoshi_pos and (new_row, new_col) != other_yoshi_pos:
+                    valid_moves.append((new_row, new_col))
+                elif not other_yoshi_pos:
+                    valid_moves.append((new_row, new_col))
         
         return valid_moves
 
-    
     def _place_yoshis_randomly(self):
         """Coloca los Yoshis en posiciones aleatorias válidas (NO en zonas especiales)"""
         available_positions = []
         
-        # Recolectar todas las posiciones válidas (solo casillas normales, NO zonas especiales)
         for row in range(BOARD_SIZE):
             for col in range(BOARD_SIZE):
                 pos = (row, col)
-                # Una posición es válida si NO está en una zona especial
                 if not self._is_in_special_zone(pos):
                     available_positions.append(pos)
         
-        # Debug
-        print(f"Posiciones disponibles para colocar Yoshis: {len(available_positions)}")
-        print(f"Zonas especiales definidas: {self.special_zones}")
-        
-        # Verificar que haya suficientes posiciones válidas
         if len(available_positions) < 2:
-            raise ValueError(f"No hay suficientes posiciones válidas para colocar los Yoshis. Solo hay {len(available_positions)} disponibles")
+            raise ValueError(f"No hay suficientes posiciones válidas para colocar los Yoshis")
         
-        # Seleccionar dos posiciones diferentes aleatoriamente
         selected_positions = random.sample(available_positions, 2)
         
-        # Asignar posiciones a los Yoshis
         self.green_yoshi_pos = selected_positions[0]
         self.red_yoshi_pos = selected_positions[1]
         
-        # Debug: verificar las posiciones asignadas
-        print(f"Yoshi Verde colocado en: {self.green_yoshi_pos}, ¿En zona especial?: {self._is_in_special_zone(self.green_yoshi_pos)}")
-        print(f"Yoshi Rojo colocado en: {self.red_yoshi_pos}, ¿En zona especial?: {self._is_in_special_zone(self.red_yoshi_pos)}")
+        # Registrar la zona inicial de la IA para estrategia experta
+        self.logic.set_initial_zone(self.green_yoshi_pos, self.special_zones)
         
-        # Verificación final - si algún Yoshi está en zona especial, es un error
-        if self._is_in_special_zone(self.green_yoshi_pos) or self._is_in_special_zone(self.red_yoshi_pos):
-            print("ERROR: Un Yoshi fue colocado en zona especial. Reintentando...")
-            self._place_yoshis_randomly()  # Reintentar
+        # Limpiar historial de movimientos
+        self.move_history.clear()
 
     def _check_zone_winners(self):
         """Verifica qué zonas han sido ganadas por completo por cada jugador"""
@@ -171,24 +172,38 @@ class YoshisZonesGame:
         for zone in self.special_zones:
             owners = [self.cell_owner.get(cell) for cell in zone]
 
-            # Si todos los cuadros están pintados y por el mismo jugador
             if owners.count(Player.GREEN) == 5:
                 self.green_zones_won += 1
             elif owners.count(Player.RED) == 5:
                 self.red_zones_won += 1
 
-
     def _is_game_over(self) -> bool:
-        """Verifica si el juego ha terminado (no quedan celdas especiales por pintar)"""
+        """Verifica si el juego ha terminado"""
         all_special_cells = set()
         for zone in self.special_zones:
             all_special_cells.update(zone)
         
         return all_special_cells.issubset(self.painted_cells)
 
+    def _is_repetitive_move(self, new_pos: Tuple[int, int]) -> bool:
+        """Verifica si el movimiento causaría una repetición excesiva"""
+        if len(self.move_history) < 4:
+            return False
+        
+        # Verificar patrones de movimiento repetitivo
+        recent_moves = self.move_history[-4:]
+        if recent_moves.count(new_pos) >= 2:
+            return True
+        
+        return False
 
     def _make_move(self, new_pos: Tuple[int, int]):
         """Realiza un movimiento del jugador actual"""
+        # Agregar al historial de movimientos
+        self.move_history.append(new_pos)
+        if len(self.move_history) > self.max_history:
+            self.move_history.pop(0)
+        
         if self.current_player == Player.GREEN:
             self.green_yoshi_pos = new_pos
         else:
@@ -201,6 +216,9 @@ class YoshisZonesGame:
 
         # Cambiar turno
         self.current_player = Player.RED if self.current_player == Player.GREEN else Player.GREEN
+        
+        # Actualizar tiempo del último movimiento
+        self.last_move_time = pygame.time.get_ticks()
 
         # Verificar zonas ganadas inmediatamente
         self._check_zone_winners()
@@ -214,8 +232,7 @@ class YoshisZonesGame:
             elif self.red_zones_won > self.green_zones_won:
                 self.winner = Player.RED
             else:
-                self.winner = None  # Empate
-
+                self.winner = None
 
     def _draw_menu(self):
         """Dibuja el menú principal"""
@@ -255,22 +272,22 @@ class YoshisZonesGame:
                 # Color base del tablero (ajedrez)
                 base_color = WHITE if (row + col) % 2 == 0 else LIGHT_GRAY
                 
-                
                 # Determinar el color final de la celda
                 if self._is_in_special_zone((row, col)):
                     if (row, col) in self.painted_cells:
                         owner = self.cell_owner.get((row, col))
-                        # Celda de zona especial ya pintada
                         if owner == Player.GREEN:
                             color = LIGHT_GREEN
                         elif owner == Player.RED:
-                            color = LIGHT_RED  # Puedes mejorar esto para mostrar quién la pintó
+                            color = LIGHT_RED
                     else:
-                        # Zona especial no pintada
                         color = YELLOW
                 else:
-                    # Celda normal
                     color = base_color
+                
+                # Destacar movimientos válidos
+                if (row, col) in self.valid_moves_for_display:
+                    color = ORANGE
                 
                 pygame.draw.rect(self.screen, color, (x, y, CELL_SIZE, CELL_SIZE))
                 pygame.draw.rect(self.screen, BLACK, (x, y, CELL_SIZE, CELL_SIZE), 2)
@@ -281,7 +298,6 @@ class YoshisZonesGame:
             x = col * CELL_SIZE + CELL_SIZE//2
             y = row * CELL_SIZE + CELL_SIZE//2
             pygame.draw.circle(self.screen, GREEN, (x, y), CELL_SIZE//3)
-            # Añadir borde negro para mejor visibilidad
             pygame.draw.circle(self.screen, BLACK, (x, y), CELL_SIZE//3, 3)
             
         if self.red_yoshi_pos:
@@ -289,7 +305,6 @@ class YoshisZonesGame:
             x = col * CELL_SIZE + CELL_SIZE//2
             y = row * CELL_SIZE + CELL_SIZE//2
             pygame.draw.circle(self.screen, RED, (x, y), CELL_SIZE//3)
-            # Añadir borde negro para mejor visibilidad
             pygame.draw.circle(self.screen, BLACK, (x, y), CELL_SIZE//3, 3)
 
     def _draw_sidebar(self):
@@ -310,13 +325,19 @@ class YoshisZonesGame:
         if self.show_initial_positions:
             current = "Iniciando... (IA jugará en breve)"
         else:
-            current = "IA (Verde)" if self.current_player == Player.GREEN else "Humano (Rojo)"
+            current_time = pygame.time.get_ticks()
+            if self.current_player == Player.GREEN:
+                remaining_time = max(0, self.ai_move_delay - (current_time - self.last_move_time)) // 1000
+                current = f"IA (Verde) - {remaining_time}s"
+            else:
+                remaining_time = max(0, self.human_move_delay - (current_time - self.last_move_time)) // 1000
+                current = f"Humano (Rojo) - {remaining_time}s"
         
         turn_text = f"Turno: {current}"
         turn_surface = self.small_font.render(turn_text, True, BLACK)
         self.screen.blit(turn_surface, (sidebar_x + 10, 90))
         
-        # NUEVO: Mostrar posiciones actuales
+        # Mostrar posiciones actuales
         if self.green_yoshi_pos:
             green_pos_text = f"Verde en: {self.green_yoshi_pos}"
             green_pos_surface = self.small_font.render(green_pos_text, True, GREEN)
@@ -340,23 +361,24 @@ class YoshisZonesGame:
         red_surface = self.small_font.render(red_score, True, RED)
         self.screen.blit(red_surface, (sidebar_x + 10, 240))
         
-        # Instrucciones
+        # Instrucciones mejoradas
         instructions = [
             "INSTRUCCIONES:",
             "- Los Yoshis se mueven como",
             "  caballos de ajedrez",
             "- Haz clic en una casilla",
-            "  válida para moverte",
+            "  naranja (válida) para moverte",
+            "- No pueden ocupar la misma",
+            "  posición",
             "- Gana zonas especiales",
-            "  (amarillas) pintando la",
-            "  mayoría de sus casillas"
+            "  (amarillas) completándolas"
         ]
         
         for i, instruction in enumerate(instructions):
             color = BLACK if i == 0 else DARK_GRAY
             font = self.small_font if i > 0 else self.small_font
             inst_surface = font.render(instruction, True, color)
-            self.screen.blit(inst_surface, (sidebar_x + 10, 300 + i*25))
+            self.screen.blit(inst_surface, (sidebar_x + 10, 300 + i*22))
 
     def _draw_game_over(self):
         """Dibuja la pantalla de fin de juego"""
@@ -365,7 +387,6 @@ class YoshisZonesGame:
         overlay.fill(BLACK)
         self.screen.blit(overlay, (0, 0))
         
-        # Mensaje de fin de juego
         if self.winner == Player.GREEN:
             message = "¡LA IA HA GANADO!"
             color = GREEN
@@ -380,13 +401,11 @@ class YoshisZonesGame:
         text_rect = text_surface.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 - 50))
         self.screen.blit(text_surface, text_rect)
         
-        # Puntuación final
         final_score = f"Verde: {self.green_zones_won} - Rojo: {self.red_zones_won}"
         score_surface = self.small_font.render(final_score, True, WHITE)
         score_rect = score_surface.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2))
         self.screen.blit(score_surface, score_rect)
         
-        # Botón para volver al menú
         pygame.draw.rect(self.screen, BLUE, (WINDOW_WIDTH//2 - 100, WINDOW_HEIGHT//2 + 50, 200, 50))
         menu_text = self.small_font.render("VOLVER AL MENÚ", True, WHITE)
         menu_rect = menu_text.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT//2 + 75))
@@ -397,7 +416,6 @@ class YoshisZonesGame:
         x, y = pos
         
         if self.game_state == GameState.MENU:
-            # Botones de dificultad
             if 200 <= y <= 250:
                 self.difficulty = Difficulty.BEGINNER
                 self.logic.difficulty = self.difficulty
@@ -411,7 +429,7 @@ class YoshisZonesGame:
                 # Iniciar juego
                 self.game_state = GameState.PLAYING
                 self._place_yoshis_randomly()
-                self.green_zones_won = 0  # Reinicia las zonas ganadas a 0
+                self.green_zones_won = 0
                 self.red_zones_won = 0
                 self.painted_cells.clear()
                 self.cell_owner.clear()
@@ -419,13 +437,18 @@ class YoshisZonesGame:
                 self.game_over = False
                 self.winner = None
                 
-                # NUEVO: Configurar el timer para el primer movimiento de la IA
                 self.ai_move_timer = pygame.time.get_ticks()
+                self.last_move_time = pygame.time.get_ticks()
                 self.show_initial_positions = True
+                self.show_valid_moves = False
+                self.valid_moves_for_display.clear()
                 
         elif self.game_state == GameState.PLAYING and not self.game_over:
-            # Solo permitir clics del humano en su turno
-            if self.current_player == Player.RED and x < BOARD_WIDTH:
+            # Solo permitir clics del humano en su turno y después del delay
+            current_time = pygame.time.get_ticks()
+            if (self.current_player == Player.RED and x < BOARD_WIDTH and 
+                current_time - self.last_move_time >= self.human_move_delay):
+                
                 col = x // CELL_SIZE
                 row = y // CELL_SIZE
                 
@@ -433,45 +456,54 @@ class YoshisZonesGame:
                     valid_moves = self._get_valid_knight_moves(self.red_yoshi_pos)
                     if (row, col) in valid_moves:
                         self._make_move((row, col))
+                        self.show_valid_moves = False
+                        self.valid_moves_for_display.clear()
                         
         elif self.game_over:
-            # Volver al menú
             if (WINDOW_HEIGHT//2 + 50 <= y <= WINDOW_HEIGHT//2 + 100 and
                 WINDOW_WIDTH//2 - 100 <= x <= WINDOW_WIDTH//2 + 100):
                 self.game_state = GameState.MENU
                 
     def update(self):
         """Actualiza la lógica del juego"""
-        if (self.game_state == GameState.PLAYING and 
-            self.current_player == Player.GREEN and 
-            not self.game_over):
+        current_time = pygame.time.get_ticks()
+        
+        if (self.game_state == GameState.PLAYING and not self.game_over):
             
-            # Si es el primer movimiento, mostrar posiciones iniciales por un momento
-            if self.show_initial_positions:
-                current_time = pygame.time.get_ticks()
-                if current_time - self.ai_move_timer > self.ai_move_delay:
-                    self.show_initial_positions = False
-                    # Ahora sí hacer el movimiento de la IA
-                    ai_move = self.logic.get_ai_move(
-                        self.green_yoshi_pos,
-                        self.red_yoshi_pos,
-                        self.painted_cells,
-                        self.cell_owner
-                    )
-
-                    if ai_move:
-                        self._make_move(ai_move)
-            else:
-                # Movimientos normales de la IA (sin retraso)
-                ai_move = self.logic.get_ai_move(
-                    self.green_yoshi_pos,
-                    self.red_yoshi_pos,
-                    self.painted_cells,
-                    self.cell_owner
-                )
-
-                if ai_move:
-                    self._make_move(ai_move)
+            # Turno de la IA
+            if self.current_player == Player.GREEN:
+                if self.show_initial_positions:
+                    if current_time - self.ai_move_timer > self.ai_move_delay:
+                        self.show_initial_positions = False
+                        # Hacer el primer movimiento de la IA
+                        ai_move = self.logic.get_ai_move(
+                            self.green_yoshi_pos,
+                            self.red_yoshi_pos,
+                            self.painted_cells,
+                            self.cell_owner,
+                            self.move_history
+                        )
+                        if ai_move:
+                            self._make_move(ai_move)
+                else:
+                    # Movimientos normales de la IA con delay
+                    if current_time - self.last_move_time >= self.ai_move_delay:
+                        ai_move = self.logic.get_ai_move(
+                            self.green_yoshi_pos,
+                            self.red_yoshi_pos,
+                            self.painted_cells,
+                            self.cell_owner,
+                            self.move_history
+                        )
+                        if ai_move:
+                            self._make_move(ai_move)
+            
+            # Turno del humano - mostrar movimientos válidos
+            elif self.current_player == Player.RED:
+                if current_time - self.last_move_time >= self.human_move_delay:
+                    if not self.show_valid_moves:
+                        self.show_valid_moves = True
+                        self.valid_moves_for_display = self._get_valid_knight_moves(self.red_yoshi_pos)
 
     def draw(self):
         """Dibuja toda la interfaz"""
