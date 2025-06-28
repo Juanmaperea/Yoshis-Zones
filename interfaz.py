@@ -58,7 +58,7 @@ class YoshisZonesGame:
         # Zonas especiales (esquinas + casillas adyacentes)
         self.special_zones = self._create_special_zones()
         self.logic = GameLogic(self.difficulty, self.special_zones)
-        self.painted_cells = set()  # Células pintadas que no se pueden usar
+        self.painted_cells = set()
         
         # Puntuación
         self.green_zones_won = 0
@@ -83,6 +83,12 @@ class YoshisZonesGame:
         # Mostrar movimientos válidos
         self.show_valid_moves = False
         self.valid_moves_for_display = []
+
+        # Cargar imágenes de los Yoshis
+        self.yoshi_green_img = pygame.image.load("./imagenes/yoshi_verde.png")
+        self.yoshi_green_img = pygame.transform.scale(self.yoshi_green_img, (CELL_SIZE-10, CELL_SIZE-10))
+        self.yoshi_red_img = pygame.image.load("./imagenes/yoshi_rojo.png")
+        self.yoshi_red_img = pygame.transform.scale(self.yoshi_red_img, (CELL_SIZE-10, CELL_SIZE-10))
 
     def _create_special_zones(self) -> List[List[Tuple[int, int]]]:
         """Crea las 4 zonas especiales en las esquinas del tablero"""
@@ -292,20 +298,17 @@ class YoshisZonesGame:
                 pygame.draw.rect(self.screen, color, (x, y, CELL_SIZE, CELL_SIZE))
                 pygame.draw.rect(self.screen, BLACK, (x, y, CELL_SIZE, CELL_SIZE), 2)
         
-        # Dibujar Yoshis
         if self.green_yoshi_pos:
             col, row = self.green_yoshi_pos[1], self.green_yoshi_pos[0]
-            x = col * CELL_SIZE + CELL_SIZE//2
-            y = row * CELL_SIZE + CELL_SIZE//2
-            pygame.draw.circle(self.screen, GREEN, (x, y), CELL_SIZE//3)
-            pygame.draw.circle(self.screen, BLACK, (x, y), CELL_SIZE//3, 3)
-            
+            x = col * CELL_SIZE + 5
+            y = row * CELL_SIZE + 5
+            self.screen.blit(self.yoshi_green_img, (x, y))
+
         if self.red_yoshi_pos:
             col, row = self.red_yoshi_pos[1], self.red_yoshi_pos[0]
-            x = col * CELL_SIZE + CELL_SIZE//2
-            y = row * CELL_SIZE + CELL_SIZE//2
-            pygame.draw.circle(self.screen, RED, (x, y), CELL_SIZE//3)
-            pygame.draw.circle(self.screen, BLACK, (x, y), CELL_SIZE//3, 3)
+            x = col * CELL_SIZE + 5
+            y = row * CELL_SIZE + 5
+            self.screen.blit(self.yoshi_red_img, (x, y))
 
     def _draw_sidebar(self):
         """Dibuja la barra lateral con información del juego"""
