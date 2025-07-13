@@ -29,7 +29,9 @@ LIGHT_GREEN = (144, 238, 144)
 LIGHT_RED = (255, 182, 193)
 BLUE = (0, 0, 255)
 YELLOW = (255, 255, 0)
-ORANGE = (255, 165, 0) 
+ORANGE = (255, 165, 0)
+DARK_GREEN = (0, 200, 0)
+DARK_RED = (200, 0, 0)
 
 class GameState(Enum):
     MENU = 1
@@ -59,6 +61,10 @@ class YoshisZonesGame:
         self.special_zones = self._create_special_zones()
         self.logic = GameLogic(self.difficulty, self.special_zones)
         self.painted_cells = set()
+        
+        # Control de zonas ganadas
+        self.zone_winners = {}  # Diccionario: zona_index -> Player
+        self.won_zones_cells = set()  # Casillas de zonas ya ganadas
         
         # Puntuación
         self.green_zones_won = 0
@@ -123,6 +129,18 @@ class YoshisZonesGame:
                 return True
         return False
 
+    def _get_zone_index(self, pos: Tuple[int, int]) -> int:
+        """Obtiene el índice de la zona especial donde está la posición"""
+        for i, zone in enumerate(self.special_zones):
+            if pos in zone:
+                return i
+        return -1
+
+    def _is_zone_won(self, pos: Tuple[int, int]) -> bool:
+        """Verifica si la posición está en una zona ya ganada"""
+        zone_index = self._get_zone_index(pos)
+        return zone_index in self.zone_winners
+
     def _get_valid_knight_moves(self, pos: Tuple[int, int]) -> List[Tuple[int, int]]:
         """Obtiene todos los movimientos válidos de caballo desde una posición"""
         row, col = pos
@@ -134,15 +152,23 @@ class YoshisZonesGame:
         valid_moves = []
         for dr, dc in knight_moves:
             new_row, new_col = row + dr, col + dc
-            if (0 <= new_row < BOARD_SIZE and 0 <= new_col < BOARD_SIZE and
-                (new_row, new_col) not in self.painted_cells):
+            if (0 <= new_row < BOARD_SIZE and 0 <= new_col < BOARD_SIZE):
+                new_pos = (new_row, new_col)
+                
+                # No permitir movimiento a casillas ya pintadas
+                if new_pos in self.painted_cells:
+                    continue
+                
+                # No permitir movimiento a zonas ya ganadas
+                if self._is_zone_won(new_pos):
+                    continue
                 
                 # No permitir que los Yoshis ocupen la misma posición
                 other_yoshi_pos = self.red_yoshi_pos if pos == self.green_yoshi_pos else self.green_yoshi_pos
-                if other_yoshi_pos and (new_row, new_col) != other_yoshi_pos:
-                    valid_moves.append((new_row, new_col))
-                elif not other_yoshi_pos:
-                    valid_moves.append((new_row, new_col))
+                if other_yoshi_pos and new_pos == other_yoshi_pos:
+                    continue
+                
+                valid_moves.append(new_pos)
         
         return valid_moves
 
@@ -170,26 +196,52 @@ class YoshisZonesGame:
         # Limpiar historial de movimientos
         self.move_history.clear()
 
+    def _check_zone_completion(self, zone_index: int):
+        """Verifica si una zona ha sido ganada por tener 3 casillas del mismo color"""
+        zone = self.special_zones[zone_index]
+        
+        # Contar casillas por jugador
+        green_count = 0
+        red_count = 0
+        
+        for cell in zone:
+            if cell in self.cell_owner:
+                if self.cell_owner[cell] == Player.GREEN:
+                    green_count += 1
+                elif self.cell_owner[cell] == Player.RED:
+                    red_count += 1
+        
+        # Verificar si algún jugador ha ganado la zona (3 casillas)
+        if green_count >= 3 and zone_index not in self.zone_winners:
+            self.zone_winners[zone_index] = Player.GREEN
+            self._mark_zone_as_won(zone_index, Player.GREEN)
+            self.green_zones_won += 1
+        elif red_count >= 3 and zone_index not in self.zone_winners:
+            self.zone_winners[zone_index] = Player.RED
+            self._mark_zone_as_won(zone_index, Player.RED)
+            self.red_zones_won += 1
+
+    def _mark_zone_as_won(self, zone_index: int, winner: Player):
+        """Marca toda la zona como ganada por el jugador especificado"""
+        zone = self.special_zones[zone_index]
+        
+        # Marcar todas las casillas de la zona como pintadas y del color del ganador
+        for cell in zone:
+            self.painted_cells.add(cell)
+            self.cell_owner[cell] = winner
+            self.won_zones_cells.add(cell)
+
     def _check_zone_winners(self):
-        """Verifica qué zonas han sido ganadas por completo por cada jugador"""
-        self.green_zones_won = 0
-        self.red_zones_won = 0
-
-        for zone in self.special_zones:
-            owners = [self.cell_owner.get(cell) for cell in zone]
-
-            if owners.count(Player.GREEN) == 5:
-                self.green_zones_won += 1
-            elif owners.count(Player.RED) == 5:
-                self.red_zones_won += 1
+        """Verifica qué zonas han sido ganadas por tener 3 casillas del mismo color"""
+        for i in range(len(self.special_zones)):
+            if i not in self.zone_winners:  # Solo verificar zonas no ganadas
+                self._check_zone_completion(i)
 
     def _is_game_over(self) -> bool:
         """Verifica si el juego ha terminado"""
-        all_special_cells = set()
-        for zone in self.special_zones:
-            all_special_cells.update(zone)
-        
-        return all_special_cells.issubset(self.painted_cells)
+        # El juego termina cuando todas las zonas especiales han sido ganadas
+        # o cuando no hay más movimientos válidos
+        return len(self.zone_winners) == len(self.special_zones)
 
     def _is_repetitive_move(self, new_pos: Tuple[int, int]) -> bool:
         """Verifica si el movimiento causaría una repetición excesiva"""
@@ -219,6 +271,11 @@ class YoshisZonesGame:
         if self._is_in_special_zone(new_pos):
             self.painted_cells.add(new_pos)
             self.cell_owner[new_pos] = self.current_player
+            
+            # Verificar si se ganó la zona
+            zone_index = self._get_zone_index(new_pos)
+            if zone_index >= 0:
+                self._check_zone_completion(zone_index)
 
         # Cambiar turno
         self.current_player = Player.RED if self.current_player == Player.GREEN else Player.GREEN
@@ -226,13 +283,9 @@ class YoshisZonesGame:
         # Actualizar tiempo del último movimiento
         self.last_move_time = pygame.time.get_ticks()
 
-        # Verificar zonas ganadas inmediatamente
-        self._check_zone_winners()
-
         # Verificar si el juego terminó
         if self._is_game_over():
             self.game_over = True
-            self._check_zone_winners()
             if self.green_zones_won > self.red_zones_won:
                 self.winner = Player.GREEN
             elif self.red_zones_won > self.green_zones_won:
@@ -279,25 +332,48 @@ class YoshisZonesGame:
                 base_color = WHITE if (row + col) % 2 == 0 else LIGHT_GRAY
                 
                 # Determinar el color final de la celda
-                if self._is_in_special_zone((row, col)):
-                    if (row, col) in self.painted_cells:
-                        owner = self.cell_owner.get((row, col))
+                pos = (row, col)
+                zone_index = self._get_zone_index(pos)
+                
+                if zone_index >= 0:  # Es una zona especial
+                    if zone_index in self.zone_winners:
+                        # Zona ganada - colorear toda la zona del color del ganador
+                        winner = self.zone_winners[zone_index]
+                        if winner == Player.GREEN:
+                            color = DARK_GREEN
+                        else:
+                            color = DARK_RED
+                    elif pos in self.painted_cells:
+                        # Casilla pintada en zona no ganada
+                        owner = self.cell_owner.get(pos)
                         if owner == Player.GREEN:
                             color = LIGHT_GREEN
                         elif owner == Player.RED:
                             color = LIGHT_RED
+                        else:
+                            color = YELLOW
                     else:
+                        # Zona especial disponible
                         color = YELLOW
                 else:
+                    # Casilla normal
                     color = base_color
                 
                 # Destacar movimientos válidos
-                if (row, col) in self.valid_moves_for_display:
+                if pos in self.valid_moves_for_display:
                     color = ORANGE
                 
                 pygame.draw.rect(self.screen, color, (x, y, CELL_SIZE, CELL_SIZE))
                 pygame.draw.rect(self.screen, BLACK, (x, y, CELL_SIZE, CELL_SIZE), 2)
+                
+                # Agregar texto "GANADA" en zonas ganadas
+                if zone_index >= 0 and zone_index in self.zone_winners:
+                    text_color = WHITE if self.zone_winners[zone_index] == Player.GREEN else WHITE
+                    won_text = self.small_font.render("GANADA", True, text_color)
+                    text_rect = won_text.get_rect(center=(x + CELL_SIZE//2, y + CELL_SIZE//2))
+                    self.screen.blit(won_text, text_rect)
         
+        # Dibujar Yoshis
         if self.green_yoshi_pos:
             col, row = self.green_yoshi_pos[1], self.green_yoshi_pos[0]
             x = col * CELL_SIZE + 5
@@ -364,6 +440,26 @@ class YoshisZonesGame:
         red_surface = self.small_font.render(red_score, True, RED)
         self.screen.blit(red_surface, (sidebar_x + 10, 240))
         
+        # Mostrar zonas ganadas específicas
+        zones_won_text = "ZONAS GANADAS:"
+        zones_surface = self.small_font.render(zones_won_text, True, BLACK)
+        self.screen.blit(zones_surface, (sidebar_x + 10, 270))
+        
+        y_offset = 300
+        zone_names = ["Sup. Izq.", "Sup. Der.", "Inf. Izq.", "Inf. Der."]
+        for i, zone_name in enumerate(zone_names):
+            if i in self.zone_winners:
+                winner = self.zone_winners[i]
+                color = GREEN if winner == Player.GREEN else RED
+                winner_text = "Verde" if winner == Player.GREEN else "Rojo"
+                zone_text = f"{zone_name}: {winner_text}"
+            else:
+                color = DARK_GRAY
+                zone_text = f"{zone_name}: Disponible"
+            
+            zone_surface = self.small_font.render(zone_text, True, color)
+            self.screen.blit(zone_surface, (sidebar_x + 10, y_offset + i*20))
+        
         # Instrucciones mejoradas
         instructions = [
             "INSTRUCCIONES:",
@@ -371,17 +467,18 @@ class YoshisZonesGame:
             "  caballos de ajedrez",
             "- Haz clic en una casilla",
             "  naranja (válida) para moverte",
-            "- No pueden ocupar la misma",
-            "  posición",
-            "- Gana zonas especiales",
-            "  (amarillas) completándolas"
+            "- Gana una zona con 3 casillas",
+            "- Zonas ganadas se colorean",
+            "  completamente",
+            "- No puedes moverte a zonas",
+            "  ya ganadas"
         ]
         
         for i, instruction in enumerate(instructions):
             color = BLACK if i == 0 else DARK_GRAY
             font = self.small_font if i > 0 else self.small_font
             inst_surface = font.render(instruction, True, color)
-            self.screen.blit(inst_surface, (sidebar_x + 10, 300 + i*22))
+            self.screen.blit(inst_surface, (sidebar_x + 10, 400 + i*22))
 
     def _draw_game_over(self):
         """Dibuja la pantalla de fin de juego"""
@@ -436,6 +533,8 @@ class YoshisZonesGame:
                 self.red_zones_won = 0
                 self.painted_cells.clear()
                 self.cell_owner.clear()
+                self.zone_winners.clear()
+                self.won_zones_cells.clear()
                 self.current_player = Player.GREEN
                 self.game_over = False
                 self.winner = None
