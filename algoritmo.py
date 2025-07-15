@@ -102,15 +102,15 @@ class GameLogic:
                         score += 15 * green_count
 
                 # Bonificación por estar cerca de completar una zona
-                if green_count == 4:
+                if green_count == 3:
                     score += 25
-                elif green_count == 3:
+                elif green_count == 2:
                     score += 15
                 
                 # Penalización si el oponente está cerca de completar
-                if red_count == 4:
+                if red_count == 3:
                     score -= 30
-                elif red_count == 3:
+                elif red_count == 2:
                     score -= 20
 
             # 2. Evaluar proximidad a zonas no controladas
@@ -134,6 +134,10 @@ class GameLogic:
             # 4. Penalización por repetición de movimientos
             if move_history and is_repetitive_move(green_pos, move_history):
                 score -= 20
+
+            #Impresion de la utilidad heuristica de cada movimiento
+            #print(f"[Evaluación heurística] GREEN: {green_pos}, RED: {red_pos}, Puntaje: {score}")
+            
 
             return score
 
